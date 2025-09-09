@@ -1,5 +1,7 @@
 # WellDoc AI Risk Prediction Dashboard
 
+https://hackwellprototype-chita.streamlit.app
+
 An AI-driven risk prediction engine for chronic care patients that processes 30-180 days of patient data to predict the probability of deterioration within 90 days.
 
 ## Overview
