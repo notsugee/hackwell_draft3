@@ -8,6 +8,7 @@ from PIL import Image
 import os
 from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime, timedelta
+import heart_model  # Import the heart disease model module
 
 st.set_page_config(
     page_title="WellDoc AI Risk Prediction",
@@ -128,7 +129,7 @@ factor_names = {
 }
 
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Data Upload", "Data Visualization", "Risk Prediction"])
+page = st.sidebar.radio("Go to", ["Data Upload", "Data Visualization", "Heart Risk Prediction"])
 
 if "patient_data" not in st.session_state:
     st.session_state.patient_data = None
@@ -138,6 +139,10 @@ if "prediction_results" not in st.session_state:
 
 if "selected_patient" not in st.session_state:
     st.session_state.selected_patient = None
+
+if "heart_model" not in st.session_state:
+    # Load the heart disease model
+    st.session_state.heart_model = heart_model.load_heart_model()
 
 if page == "Data Upload":
     st.title("AI-Driven Risk Prediction Engine for Chronic Care Patients")
@@ -227,12 +232,44 @@ elif page == "Data Visualization":
             col1, col2 = st.columns(2)
             
             with col1:
-                st.image(load_image("age_distribution.png"), caption="Age Distribution")
+                # Dynamic Age Distribution
+                fig, ax = plt.subplots(figsize=(10, 6))
+                age_data = data.drop_duplicates('patient_id')['age']
+                sns.histplot(age_data, bins=12, kde=True, color='#1f77b4', ax=ax)
+                ax.set_title('Age Distribution of Patients')
+                ax.set_xlabel('Age (years)')
+                ax.set_ylabel('Number of Patients')
+                ax.grid(True, alpha=0.3)
+                st.pyplot(fig)
                 
             with col2:
-                st.image(load_image("gender_distribution.png"), caption="Gender Distribution")
-                
-            st.image(load_image("geographic_distribution.png"), caption="Geographic Distribution")
+                # Dynamic Gender Distribution
+                fig, ax = plt.subplots(figsize=(8, 8))
+                gender_counts = data.drop_duplicates('patient_id')['gender'].value_counts()
+                ax.pie(gender_counts, labels=gender_counts.index, autopct='%1.1f%%', 
+                       colors=['#1f77b4', '#ff7f0e'], startangle=90, explode=[0.05, 0])
+                ax.set_title('Gender Distribution of Patients')
+                st.pyplot(fig)
+            
+            # Add random region data for visualization purposes
+            if 'region' not in data.columns:
+                unique_patients = data['patient_id'].unique()
+                region_map = {}
+                regions = ['Northeast', 'Southeast', 'Midwest', 'West', 'Southwest']
+                for patient in unique_patients:
+                    region_map[patient] = np.random.choice(regions)
+                data['region'] = data['patient_id'].map(region_map)
+            
+            # Dynamic Geographic Distribution
+            fig, ax = plt.subplots(figsize=(10, 6))
+            region_counts = data.drop_duplicates('patient_id')['region'].value_counts()
+            sns.barplot(x=region_counts.index, y=region_counts.values, palette='viridis', ax=ax)
+            ax.set_title('Geographic Distribution of Patients')
+            ax.set_xlabel('Region')
+            ax.set_ylabel('Number of Patients')
+            ax.grid(True, alpha=0.3)
+            plt.xticks(rotation=45)
+            st.pyplot(fig)
         
         with tab2:
             st.write("### Clinical Metrics")
@@ -240,28 +277,151 @@ elif page == "Data Visualization":
             col1, col2 = st.columns(2)
             
             with col1:
-                st.image(load_image("clinical_metric1.png"), caption="Blood Glucose Levels")
+                # Dynamic Blood Glucose Levels
+                fig, ax = plt.subplots(figsize=(10, 6))
+                sns.boxplot(x='has_diabetes', y='blood_glucose', data=data, 
+                           palette=['#2ca02c', '#d62728'], ax=ax)
+                ax.set_title('Blood Glucose Levels by Diabetes Status')
+                ax.set_xlabel('Has Diabetes')
+                ax.set_ylabel('Blood Glucose (mg/dL)')
+                ax.set_xticklabels(['No', 'Yes'])
+                ax.axhline(y=125, color='red', linestyle='--', alpha=0.7, label='High Risk Threshold')
+                ax.legend()
+                st.pyplot(fig)
                 
             with col2:
-                st.image(load_image("clinical_metric2.png"), caption="Blood Pressure Readings")
-                
-            st.image(load_image("clinical_correlation.png"), caption="Clinical Metric Correlations")
+                # Dynamic Blood Pressure Readings
+                fig, ax = plt.subplots(figsize=(10, 6))
+                bp_data = data.groupby('has_hypertension').agg({
+                    'systolic_bp': 'mean',
+                    'diastolic_bp': 'mean'
+                }).reset_index()
+
+                x = np.arange(2)
+                width = 0.35
+                ax.bar(x - width/2, bp_data['systolic_bp'], width, label='Systolic', color='#1f77b4')
+                ax.bar(x + width/2, bp_data['diastolic_bp'], width, label='Diastolic', color='#ff7f0e')
+                ax.set_title('Average Blood Pressure by Hypertension Status')
+                ax.set_xticks(x)
+                ax.set_xticklabels(['Non-Hypertensive', 'Hypertensive'])
+                ax.set_ylabel('Blood Pressure (mmHg)')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                st.pyplot(fig)
+            
+            # Dynamic Clinical Correlation Heatmap
+            fig, ax = plt.subplots(figsize=(12, 10))
+            clinical_cols = ['blood_glucose', 'systolic_bp', 'diastolic_bp', 
+                            'heart_rate', 'physical_activity', 'sleep_quality']
+            correlation = data[clinical_cols].corr()
+            mask = np.triu(np.ones_like(correlation, dtype=bool))
+            sns.heatmap(correlation, mask=mask, annot=True, fmt='.2f', cmap='viridis',
+                       linewidths=0.5, cbar_kws={"shrink": .8}, ax=ax)
+            ax.set_title('Correlation Between Clinical Metrics')
+            st.pyplot(fig)
         
         with tab3:
             st.write("### Temporal Patterns")
             
-            st.image(load_image("temporal_pattern.png"), caption="Metric Changes Over Time")
+            # Ensure date is in datetime format
+            if data['date'].dtype != 'datetime64[ns]':
+                data['date'] = pd.to_datetime(data['date'])
+            
+            # Dynamic Metric Changes Over Time
+            fig, ax = plt.subplots(figsize=(12, 7))
+            data['week'] = (data['date'].dt.to_period('W').astype(str)
+                          .apply(lambda x: x.split('/')[-1]))
+            
+            # Calculate weekly averages for some patients
+            sample_patients = data['patient_id'].unique()[:5]
+            patient_subset = data[data['patient_id'].isin(sample_patients)]
+            weekly_avg = patient_subset.groupby(['patient_id', 'week'])['blood_glucose'].mean().reset_index()
+            
+            # Plot the time series for each patient
+            for patient_id, group in weekly_avg.groupby('patient_id'):
+                ax.plot(group['week'], group['blood_glucose'], marker='o', linewidth=2, 
+                       label=f"Patient {patient_id}")
+            
+            ax.set_title('Blood Glucose Trends Over Time for Sample Patients')
+            ax.set_xlabel('Week')
+            ax.set_ylabel('Average Blood Glucose (mg/dL)')
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
+            plt.xticks(rotation=45)
+            st.pyplot(fig)
             
             col1, col2 = st.columns(2)
             
             with col1:
-                st.image(load_image("trend_analysis.png"), caption="Trend Analysis")
+                # Dynamic Trend Analysis
+                fig, ax = plt.subplots(figsize=(10, 6))
+                date_groups = data.groupby('date')
+                trend_data = date_groups.agg({
+                    'blood_glucose': 'mean',
+                    'systolic_bp': 'mean',
+                    'physical_activity': 'mean'
+                }).reset_index()
+                trend_data = trend_data.sort_values('date')
+                
+                # Normalize the data for comparison
+                def normalize(series):
+                    if series.max() == series.min():
+                        return series - series.min()
+                    return (series - series.min()) / (series.max() - series.min())
+                
+                trend_data['glucose_norm'] = normalize(trend_data['blood_glucose'])
+                trend_data['bp_norm'] = normalize(trend_data['systolic_bp'])
+                trend_data['activity_norm'] = normalize(trend_data['physical_activity'])
+                
+                # Plot the trends
+                ax.plot(trend_data['date'], trend_data['glucose_norm'], label='Blood Glucose', color='#1f77b4')
+                ax.plot(trend_data['date'], trend_data['bp_norm'], label='Systolic BP', color='#ff7f0e')
+                ax.plot(trend_data['date'], trend_data['activity_norm'], label='Physical Activity', color='#2ca02c')
+                
+                ax.set_title('Normalized Trend Analysis of Key Health Metrics')
+                ax.set_xlabel('Date')
+                ax.set_ylabel('Normalized Value')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                plt.xticks(rotation=45)
+                st.pyplot(fig)
                 
             with col2:
-                st.image(load_image("seasonal_patterns.png"), caption="Seasonal Patterns")
+                # Dynamic Seasonal Patterns
+                fig, ax = plt.subplots(figsize=(10, 6))
+                data['month'] = data['date'].dt.month
+                monthly_stats = data.groupby('month').agg({
+                    'physical_activity': 'mean',
+                    'blood_glucose': 'mean'
+                }).reset_index()
+                
+                ax2 = ax.twinx()
+                line1 = ax.plot(monthly_stats['month'], monthly_stats['physical_activity'], 
+                               color='#1f77b4', marker='o', linewidth=2, label='Physical Activity')
+                line2 = ax2.plot(monthly_stats['month'], monthly_stats['blood_glucose'], 
+                                color='#ff7f0e', marker='s', linewidth=2, label='Blood Glucose')
+                
+                ax.set_xlabel('Month')
+                ax.set_ylabel('Average Physical Activity (minutes)')
+                ax2.set_ylabel('Average Blood Glucose (mg/dL)')
+                ax.set_title('Seasonal Patterns in Activity and Blood Glucose')
+                
+                # Fix the month labels
+                months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                ax.set_xticks(monthly_stats['month'])
+                month_labels = [months[i-1] for i in monthly_stats['month']]
+                ax.set_xticklabels(month_labels)
+                
+                ax.grid(True, alpha=0.3)
+                
+                # Combine legends
+                lines = line1 + line2
+                labels = [l.get_label() for l in lines]
+                ax.legend(lines, labels, loc='upper left')
+                st.pyplot(fig)
 
-elif page == "Risk Prediction":
-    st.title("Risk Prediction")
+elif page == "Heart Risk Prediction":
+    st.title("Heart Risk Prediction")
     
     if st.session_state.patient_data is None:
         st.warning("Please upload patient data first on the Data Upload page.")
@@ -270,240 +430,236 @@ elif page == "Risk Prediction":
     else:
         data = st.session_state.patient_data
         
+        st.markdown("""
+        This page uses a trained heart risk prediction model to assess cardiac risk.
+        The model analyzes patient data to predict the probability of heart disease.
+        """)
+        
         # Select a patient for analysis
-        st.subheader("Select Patient for Risk Assessment")
+        st.subheader("Select Patient for Heart Risk Assessment")
         
         # Get list of unique patients
         unique_patients = sorted(data['patient_id'].unique())
         
-        # Let user select a patient or use previous selection
+        # Let user select a patient
         selected_patient = st.selectbox(
             "Choose a patient ID:",
             unique_patients,
-            index=0 if st.session_state.selected_patient is None else 
-                 unique_patients.index(st.session_state.selected_patient)
+            key="heart_patient_select"
         )
         
-        # Update session state
-        st.session_state.selected_patient = selected_patient
-        
         # Show patient summary
-        patient_data = data[data['patient_id'] == selected_patient]
+        patient_data = data[data['patient_id'] == selected_patient].iloc[0].to_dict()
+        
+        # Display patient information
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Age", f"{patient_data['age']}")
+        with col2:
+            st.metric("Gender", f"{patient_data['gender']}")
+        with col3:
+            st.metric("Blood Glucose", f"{patient_data['blood_glucose']:.1f} mg/dL")
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Age", f"{patient_data['age'].iloc[0]}")
+            st.metric("Systolic BP", f"{patient_data['systolic_bp']:.1f} mmHg")
         with col2:
-            st.metric("Gender", f"{patient_data['gender'].iloc[0]}")
+            st.metric("Heart Rate", f"{patient_data['heart_rate']:.1f} bpm")
         with col3:
             conditions = []
-            if patient_data['has_diabetes'].iloc[0]:
+            if patient_data['has_diabetes']:
                 conditions.append("Diabetes")
-            if patient_data['has_hypertension'].iloc[0]:
+            if patient_data['has_hypertension']:
                 conditions.append("Hypertension")
-            if patient_data['has_heart_disease'].iloc[0]:
+            if patient_data['has_heart_disease']:
                 conditions.append("Heart Disease")
             st.metric("Conditions", ", ".join(conditions) if conditions else "None")
         
+        # Add optional inputs for model
+        st.subheader("Additional Clinical Information")
+        st.markdown("Provide additional information for more accurate predictions.")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            cholesterol = st.number_input("Cholesterol (mg/dL)", 
+                                         min_value=100, max_value=400, value=200)
+            chest_pain = st.selectbox("Chest Pain Type", 
+                                     ["Typical Angina", "Atypical Angina", 
+                                      "Non-Anginal Pain", "Asymptomatic"],
+                                     index=3)
+        
+        with col2:
+            exercise_angina = st.checkbox("Exercise-Induced Angina", value=False)
+            st_depression = st.number_input("ST Depression Induced by Exercise", 
+                                           min_value=0.0, max_value=6.0, value=0.0, step=0.1)
+        
+        # Encode chest pain type
+        cp_map = {
+            "Typical Angina": 0,
+            "Atypical Angina": 1,
+            "Non-Anginal Pain": 2,
+            "Asymptomatic": 3
+        }
+        
+        # Add values to patient data
+        patient_data['chol'] = cholesterol
+        patient_data['cp'] = cp_map[chest_pain]
+        patient_data['exang'] = 1 if exercise_angina else 0
+        patient_data['oldpeak'] = st_depression
+        
         # Button to run prediction
-        if st.button("Run Risk Prediction Analysis"):
-            with st.spinner("Running AI prediction model..."):
-                # Prepare data and run prediction
-                patient_id, features = prepare_patient_data_for_prediction(data, selected_patient)
-                risk_score, factor_contributions = predict_risk(features)
+        if st.button("Run Heart Risk Prediction"):
+            with st.spinner("Running heart risk prediction model..."):
+                # Get prediction
+                risk_prob, risk_class = heart_model.predict_heart_disease(
+                    st.session_state.heart_model, patient_data)
                 
-                # Store results in session state
-                st.session_state.prediction_results = {
-                    'patient_id': patient_id,
-                    'risk_score': risk_score,
-                    'factor_contributions': factor_contributions,
-                    'features': features
+                # Get explanation
+                explanation = heart_model.generate_shap_explanation(
+                    st.session_state.heart_model, patient_data)
+                
+                # Store in session state
+                st.session_state.heart_prediction = {
+                    'probability': risk_prob,
+                    'prediction_class': risk_class,
+                    'explanation': explanation
                 }
             
-            st.success("Prediction completed!")
+            st.success("Heart risk prediction completed!")
         
         # Show prediction results if available
-        if st.session_state.prediction_results is not None:
-            results = st.session_state.prediction_results
+        if hasattr(st.session_state, 'heart_prediction'):
+            heart_results = st.session_state.heart_prediction
             
-            st.subheader("Prediction Results")
+            st.subheader("Heart Risk Prediction Results")
             
-            tab1, tab2, tab3 = st.tabs(["Risk Assessment", "Model Performance", "Explainability"])
+            tab1, tab2 = st.tabs(["Risk Assessment", "Model Explanation"])
             
             with tab1:
-                st.write("### Patient Risk Assessment")
+                st.write("### Heart Risk Assessment")
                 
                 # Risk score display
                 col1, col2 = st.columns([1, 2])
                 
                 with col1:
-                    # Determine risk level
+                    # Format risk level
+                    risk_prob = heart_results['probability'] * 100
                     risk_level = "Low"
-                    if results['risk_score'] > 30:
+                    if risk_prob > 30:
                         risk_level = "Moderate"
-                    if results['risk_score'] > 60:
+                    if risk_prob > 60:
                         risk_level = "High"
-                        
-                    risk_delta = None
-                    if 'previous_risk' in results:
-                        risk_delta = results['risk_score'] - results['previous_risk']
                     
                     st.metric(
-                        label="Overall Risk Score", 
-                        value=f"{results['risk_score']:.1f}%", 
-                        delta=f"{risk_delta:.1f}%" if risk_delta is not None else None,
-                        delta_color="inverse"
+                        label="Heart Disease Risk", 
+                        value=f"{risk_prob:.1f}%"
                     )
                     st.metric(label="Risk Level", value=risk_level)
-                    st.metric(label="Time Horizon", value="90 days")
+                    st.metric(
+                        label="Prediction", 
+                        value="Positive" if heart_results['prediction_class'] == 1 else "Negative"
+                    )
                 
                 with col2:
-                    st.image(load_image("risk_gauge.png"), caption="Risk Assessment Gauge")
+                    # Create risk gauge visualization
+                    fig, ax = plt.subplots(figsize=(6, 4))
+                    
+                    # Create a simple gauge
+                    ax.set_xlim(0, 100)
+                    ax.set_ylim(0, 10)
+                    ax.axvspan(0, 30, color='green', alpha=0.3)
+                    ax.axvspan(30, 60, color='yellow', alpha=0.3)
+                    ax.axvspan(60, 100, color='red', alpha=0.3)
+                    
+                    # Add risk marker
+                    ax.scatter(risk_prob, 5, color='blue', s=300, zorder=3)
+                    
+                    # Add labels
+                    ax.text(15, 2, "Low Risk", ha='center')
+                    ax.text(45, 2, "Moderate Risk", ha='center')
+                    ax.text(80, 2, "High Risk", ha='center')
+                    ax.text(risk_prob, 7, f"{risk_prob:.1f}%", ha='center', fontweight='bold')
+                    
+                    # Remove axes
+                    ax.set_axis_off()
+                    
+                    st.pyplot(fig)
                 
-                # Patient-specific risk factors
-                st.subheader("Patient-Specific Risk Factors")
+                # Add clinical interpretation
+                st.subheader("Clinical Interpretation")
                 
-                # Create a DataFrame for displaying factor contributions
-                factors_df = []
-                for factor, contribution in results['factor_contributions'][:5]:  # Top 5 factors
-                    impact = "Increases Risk" if contribution > 0 else "Decreases Risk"
-                    magnitude = abs(contribution) / 0.01  # Scale for display
-                    factors_df.append({
-                        "Factor": factor_names.get(factor, factor),
-                        "Impact": impact,
-                        "Magnitude": f"{magnitude:.1f}%"
-                    })
+                # Get or generate LLM explanation if available
+                google_api_key = st.text_input(
+                    "Google API Key for LLM explanation (optional)", 
+                    type="password",
+                    help="Enter your Google API key to generate a clinical explanation with LLM"
+                )
                 
-                st.table(pd.DataFrame(factors_df))
+                if st.button("Generate Clinical Explanation"):
+                    with st.spinner("Generating clinical explanation..."):
+                        explanation_text = heart_model.explain_prediction_with_llm(
+                            heart_results['explanation'], 
+                            api_key=google_api_key if google_api_key else None
+                        )
+                        st.session_state.heart_explanation = explanation_text
                 
-                # Display the patient risk factors chart
-                st.image(load_image("patient_risk_factors.png"), 
-                         caption="Visual Representation of Risk Factors")
+                if hasattr(st.session_state, 'heart_explanation'):
+                    st.markdown(st.session_state.heart_explanation)
+                else:
+                    # Show a default explanation
+                    if heart_results['prediction_class'] == 1:
+                        st.info("""
+                        **Clinical Interpretation:**
+                        
+                        This patient shows significant risk factors for heart disease. 
+                        Recommend follow-up with cardiologist for a comprehensive evaluation.
+                        Key contributing factors likely include age, blood pressure, and cholesterol levels.
+                        """)
+                    else:
+                        st.info("""
+                        **Clinical Interpretation:**
+                        
+                        This patient shows low risk for heart disease based on current data.
+                        Recommend standard preventive care and regular monitoring of cardiac risk factors.
+                        """)
             
             with tab2:
-                st.write("### Model Performance Metrics")
-                
-                # Performance metrics explanation
-                st.markdown("""
-                Our risk prediction model was evaluated using the following metrics:
-                """)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.image(load_image("roc_curve.png"), caption="ROC Curve (AUROC: 0.87)")
-                    st.markdown("""
-                    **AUROC (Area Under Receiver Operating Characteristic)**: 
-                    Measures the model's ability to discriminate between patients who will deteriorate 
-                    and those who won't. Higher values indicate better discrimination.
-                    """)
-                
-                with col2:
-                    st.image(load_image("pr_curve.png"), caption="Precision-Recall Curve (AUPRC: 0.82)")
-                    st.markdown("""
-                    **AUPRC (Area Under Precision-Recall Curve)**:
-                    Particularly important for imbalanced datasets where deterioration events are rare.
-                    Higher values indicate better performance in identifying true positives.
-                    """)
-                
-                # Confusion matrix
-                st.subheader("Confusion Matrix")
-                st.image(load_image("confusion_matrix.png"), caption="Confusion Matrix")
-                st.markdown("""
-                The confusion matrix shows:
-                - **True Positives**: Correctly predicted deteriorations
-                - **False Positives**: Incorrectly predicted deteriorations
-                - **True Negatives**: Correctly predicted non-deteriorations
-                - **False Negatives**: Missed deteriorations
-                """)
-                
-                # Calibration plot
-                st.subheader("Calibration Plot")
-                st.image(load_image("calibration_plot.png"), caption="Model Calibration")
-                st.markdown("""
-                **Calibration**: Measures how well the predicted probabilities match the actual outcomes.
-                A well-calibrated model's predicted risk of 70% should correspond to an actual 70% 
-                frequency of deterioration.
-                """)
-            
-            with tab3:
                 st.write("### Model Explainability")
                 
-                # Global feature importance
-                st.subheader("Global Feature Importance")
-                st.image(load_image("global_feature_importance.png"), 
-                         caption="Top Features Driving Predictions")
+                # Create SHAP waterfall plot
+                st.subheader("Feature Importance for This Prediction")
+                
+                # Generate waterfall plot
+                fig = heart_model.plot_shap_waterfall(heart_results['explanation'])
+                st.pyplot(fig)
+                
+                # Show model metrics
+                st.subheader("Model Performance Metrics")
+                
+                metrics = heart_model.get_heart_model_metrics()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("AUROC", f"{metrics['auroc']:.2f}")
+                    st.metric("Precision", f"{metrics['precision']:.2f}")
+                with col2:
+                    st.metric("AUPRC", f"{metrics['auprc']:.2f}")
+                    st.metric("Recall", f"{metrics['recall']:.2f}")
+                with col3:
+                    st.metric("Accuracy", f"{metrics['accuracy']:.2f}")
+                    st.metric("F1 Score", f"{metrics['f1']:.2f}")
                 
                 st.markdown("""
-                These features have the greatest influence on our model's predictions across all patients:
+                ### About the Model
                 
-                1. **Blood Glucose Trends**: Consistent increases over time
-                2. **Medication Adherence**: Frequency of missed medications
-                3. **Physical Activity**: Decline in activity levels
-                4. **Blood Pressure**: Elevated or unstable readings
-                5. **Sleep Quality**: Poor sleep patterns
+                This heart disease prediction model was trained on a comprehensive dataset of 
+                cardiac patients. It uses a combination of demographic information, laboratory
+                values, and clinical symptoms to predict the likelihood of heart disease.
+                
+                The model was evaluated using cross-validation and shows strong performance
+                across multiple metrics including AUROC and precision-recall.
                 """)
-                
-                # Local feature importance
-                st.subheader("Patient-Specific Insights")
-                st.image(load_image("local_feature_importance.png"), 
-                         caption="Factors Affecting This Patient")
-                
-                # AI-generated clinical summary
-                st.subheader("Clinical Summary")
-                
-                # Generate a more dynamic summary based on the patient's actual risk factors
-                top_factors = [factor for factor, _ in results['factor_contributions'][:3]]
-                factor_descriptions = {
-                    'blood_glucose_avg': "elevated blood glucose levels",
-                    'glucose_trend': "consistent increase in blood glucose over time",
-                    'medication_adherence': "missed medication doses",
-                    'physical_activity_avg': "low physical activity levels",
-                    'activity_trend': "declining physical activity",
-                    'systolic_bp_avg': "elevated blood pressure readings",
-                    'bp_trend': "worsening blood pressure trends",
-                    'has_diabetes': "diabetes condition",
-                    'has_hypertension': "hypertension condition",
-                    'has_heart_disease': "heart disease condition"
-                }
-                
-                # Format top factors with their descriptions
-                factor_text = []
-                for i, factor in enumerate(top_factors):
-                    if factor in factor_descriptions:
-                        factor_text.append(f"{i+1}. {factor_descriptions[factor].capitalize()}")
-                
-                # Generate recommendations based on top factors
-                recommendations = []
-                if 'blood_glucose_avg' in top_factors or 'glucose_trend' in top_factors:
-                    recommendations.append("More frequent glucose monitoring and diabetes management education")
-                if 'medication_adherence' in top_factors:
-                    recommendations.append("Medication regimen review and adherence support")
-                if 'physical_activity_avg' in top_factors or 'activity_trend' in top_factors:
-                    recommendations.append("Personalized physical activity plan with gradual increases")
-                if 'systolic_bp_avg' in top_factors or 'bp_trend' in top_factors:
-                    recommendations.append("Blood pressure management and more frequent monitoring")
-                
-                # Default recommendations if none were generated
-                if not recommendations:
-                    recommendations = ["Regular check-ups", "Continued monitoring of key health metrics"]
-                
-                # Create the clinical summary
-                formatted_recommendations = [f"• {rec}" for rec in recommendations]
-                clinical_summary = f"""
-                **AI-Generated Clinical Interpretation:**
-                
-                This patient shows {'high' if results['risk_score'] > 60 else 'moderate' if results['risk_score'] > 30 else 'low'} risk 
-                ({results['risk_score']:.1f}%) for deterioration within 90 days. 
-                The primary contributing factors are:
-                
-                {chr(10).join(factor_text)}
-                
-                Recommended interventions include:
-                {chr(10).join(formatted_recommendations)}
-                """
-                
-                st.info(clinical_summary)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("WellDoc AI Prediction Engine v1.0")
